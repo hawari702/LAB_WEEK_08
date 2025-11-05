@@ -10,13 +10,10 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
-import androidx.work.Constraints
-import androidx.work.Data
-import androidx.work.NetworkType
-import androidx.work.OneTimeWorkRequest
-import androidx.work.WorkManager
+import androidx.work.*
 import com.example.lab_week_08.worker.FirstWorker
 import com.example.lab_week_08.worker.SecondWorker
+import com.example.lab_week_08.worker.ThirdWorker
 
 class MainActivity : AppCompatActivity() {
 
@@ -31,7 +28,7 @@ class MainActivity : AppCompatActivity() {
             insets
         }
 
-        // ===== PERMISSION CHECK UNTUK NOTIFIKASI (Android 13 ke atas) =====
+        // 🔒 Permission for notification (Android 13+)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             if (checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS)
                 != PackageManager.PERMISSION_GRANTED
@@ -40,9 +37,7 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
-        // ===== INISIALISASI WORKMANAGER =====
         val workManager = WorkManager.getInstance(this)
-
         val networkConstraints = Constraints.Builder()
             .setRequiredNetworkType(NetworkType.CONNECTED)
             .build()
@@ -59,46 +54,66 @@ class MainActivity : AppCompatActivity() {
             .setInputData(getIdInputData(SecondWorker.INPUT_DATA_ID, id))
             .build()
 
-        // Jalankan urutan First → Second
+        val thirdRequest = OneTimeWorkRequest.Builder(ThirdWorker::class.java)
+            .setConstraints(networkConstraints)
+            .setInputData(getIdInputData(ThirdWorker.INPUT_DATA_ID, id))
+            .build()
+
+        // Jalankan First → Second dulu
         workManager.beginWith(firstRequest)
             .then(secondRequest)
             .enqueue()
 
-        // Observe hasil dari FirstWorker
+        // Observe: First selesai
         workManager.getWorkInfoByIdLiveData(firstRequest.id).observe(this) { info ->
             if (info != null && info.state.isFinished) {
-                showResult("First process is done")
+                showResult("FirstWorker executed")
             }
         }
 
-        // Observe hasil dari SecondWorker → jalankan NotificationService
+        // Second selesai → Jalankan NotificationService
         workManager.getWorkInfoByIdLiveData(secondRequest.id).observe(this) { info ->
             if (info != null && info.state.isFinished) {
-                showResult("Second process is done")
+                showResult("SecondWorker executed")
                 launchNotificationService()
             }
         }
-    }
 
-    // Fungsi bantu untuk bikin input data ke worker
-    private fun getIdInputData(idKey: String, idValue: String): Data =
-        Data.Builder()
-            .putString(idKey, idValue)
-            .build()
-
-    // Fungsi untuk meluncurkan NotificationService
-    private fun launchNotificationService() {
-        // Observe LiveData untuk melihat apakah service selesai
+        // Setelah NotificationService selesai → jalankan ThirdWorker
         NotificationService.trackingCompletion.observe(this) { id ->
-            showResult("Process for Notification Channel ID $id is done!")
+            showResult("NotificationService executed")
+            // Baru jalankan ThirdWorker
+            workManager.enqueue(thirdRequest)
         }
 
-        // Intent untuk memulai service
+        // Third selesai → jalankan SecondNotificationService
+        workManager.getWorkInfoByIdLiveData(thirdRequest.id).observe(this) { info ->
+            if (info != null && info.state.isFinished) {
+                showResult("ThirdWorker executed")
+                launchSecondNotificationService()
+            }
+        }
+
+        // Setelah SecondNotificationService selesai
+        SecondNotificationService.trackingCompletion.observe(this) { id ->
+            showResult("SecondNotificationService executed")
+        }
+    }
+
+    private fun getIdInputData(idKey: String, idValue: String): Data =
+        Data.Builder().putString(idKey, idValue).build()
+
+    private fun launchNotificationService() {
         val serviceIntent = Intent(this, NotificationService::class.java).apply {
             putExtra(EXTRA_ID, "001")
         }
+        ContextCompat.startForegroundService(this, serviceIntent)
+    }
 
-        // Mulai foreground service
+    private fun launchSecondNotificationService() {
+        val serviceIntent = Intent(this, SecondNotificationService::class.java).apply {
+            putExtra(EXTRA_ID, "002")
+        }
         ContextCompat.startForegroundService(this, serviceIntent)
     }
 
